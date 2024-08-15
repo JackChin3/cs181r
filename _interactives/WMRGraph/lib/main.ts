@@ -512,3 +512,267 @@ export class WMRGraphObstacle {
 	}
 
 }
+
+interface ExtendedPolygon extends Polygon {
+	center: Point;
+}
+
+export class WMRGraphForwardControl {
+
+	private board: Board;
+	private endBox: ExtendedPolygon;
+	private robotCenter: Point;
+	private robotForward: Point;
+	private robotImage: any;
+	private robotSize: number = 2;
+	private path: any;
+	private leftWheelVelocity: any;
+	private rightWheelVelocity: any;
+	private maxVelocitySlider: Slider;
+	private animationId: number | null = null;
+	private initialRobotPosition: [number, number];
+
+	constructor( elementId: string, rotationCB: RotationCB, translationCB: TranslationCB ) {
+
+		this.board = JSXGraph.initBoard( elementId, {
+			boundingbox: [ - 10, 10, 10, - 10 ],
+			axis: true,
+			keepaspectratio: true,
+			showCopyright: false,
+			showNavigation: false,
+		} );
+
+		// Create end box
+		this.endBox = this.createBox( [ 5, 5 ], this.robotSize, 'End' );
+
+		// Initialize robot
+		this.initialRobotPosition = [ - 5, - 5 ];
+		this.robotCenter = this.board.create( 'point', this.initialRobotPosition, { name: 'Robot', size: 3, color: 'blue' } );
+		this.robotForward = this.board.create( 'point', [ - 6, - 5 ], { name: '', size: 2, color: 'red' } );
+
+		const wmrTranslator = this.board.create( 'transform', [ () => this.robotCenter.X(), () => this.robotCenter.Y() ], { type: 'translate' } );
+		wmrTranslator.bindTo( this.robotForward );
+
+		this.robotImage = this.board.create( 'image', [
+			imageURL,
+			[ () => this.robotCenter.X() - this.robotSize / 2, () => this.robotCenter.Y() - this.robotSize / 2 ],
+			[ this.robotSize, this.robotSize ],
+		] );
+
+		// Update wmr angle based on the forward point
+		const wmrForwardAngle = () => Math.atan2( this.robotForward.Y() - this.robotCenter.Y(), this.robotForward.X() - this.robotCenter.X() );
+		const rotator = this.board.create( 'transform', [ wmrForwardAngle, this.robotCenter ], { type: 'rotate' } );
+		rotator.bindTo( this.robotImage );
+
+		// Constrain forward point to circle around the center point
+		this.board.on( 'move', () => {
+
+			this.board.suspendUpdate();
+
+			const angle = wmrForwardAngle();
+			const x = ( this.robotSize / 2 ) * Math.cos( angle ) + this.robotCenter.X();
+			const y = ( this.robotSize / 2 ) * Math.sin( angle ) + this.robotCenter.Y();
+			this.robotForward.moveTo( [ x, y ] );
+
+			this.board.unsuspendUpdate();
+
+		} );
+
+		this.robotCenter.on( 'drag', () => translationCB( this.robotCenter.X(), this.robotCenter.Y() ) );
+		this.robotForward.on( 'drag', () => rotationCB( wmrForwardAngle() ) );
+
+		// Make robot draggable
+		this.robotCenter.setAttribute( { fixed: false } );
+		this.robotForward.setAttribute( { fixed: false } );
+
+		// Initialize path
+		this.path = this.board.create( 'curve', [[], []], {
+			strokeColor: 'blue',
+			strokeWidth: 2,
+		} );
+
+		this.leftWheelVelocity = this.board.create( 'curve', [[ 0 ], [ - 7 ]], {
+			strokeColor: 'red',
+			strokeWidth: 2,
+		} );
+		this.rightWheelVelocity = this.board.create( 'curve', [[ 0 ], [ - 9 ]], {
+			strokeColor: 'green',
+			strokeWidth: 2,
+		} );
+
+		// Add max velocity slider
+		this.maxVelocitySlider = this.board.create( 'slider', [[ - 9, 9 ], [ - 5, 9 ], [ 0, 0.5, 1 ]], {
+			name: 'Max Velocity',
+			snapWidth: 0.1,
+		} );
+
+		var startButton = this.board.create( 'button', [ 2, 9, 'Start', () => {
+
+			this.startMovement();
+
+		} ], {} );
+
+		var resetButton = this.board.create( 'button', [ 4.5, 9, 'Reset', () => {
+
+			this.reset();
+
+		} ], {} );
+
+		this.reset();
+
+	}
+
+	private createBox( center: number[], size: number, label: string ): ExtendedPolygon {
+
+		const halfSize = size / 2;
+		const centerPoint = this.board.create( 'point', center, { name: '', visible: false } );
+
+		const corners = [
+			[ () => centerPoint.X() - halfSize, () => centerPoint.Y() - halfSize ],
+			[ () => centerPoint.X() + halfSize, () => centerPoint.Y() - halfSize ],
+			[ () => centerPoint.X() + halfSize, () => centerPoint.Y() + halfSize ],
+			[ () => centerPoint.X() - halfSize, () => centerPoint.Y() + halfSize ],
+		];
+
+		const box = this.board.create( 'polygon', corners, {
+			fillColor: 'lightgray',
+			fillOpacity: 0.5,
+			borders: { visible: false },
+			vertices: { visible: false },
+			name: label,
+		} ) as ExtendedPolygon;
+
+		box.center = this.board.create( 'point', center, { name: '', size: 2, color: 'green' } );
+
+		box.center.on( 'drag', () => {
+
+			centerPoint.moveTo( [ box.center.X(), box.center.Y() ] );
+
+		} );
+
+		return box;
+
+	}
+
+	private startMovement() {
+
+		if ( this.animationId !== null ) {
+
+			cancelAnimationFrame( this.animationId );
+
+		}
+
+		// Clear the path
+		this.path.dataX = [];
+		this.path.dataY = [];
+		this.path.updateDataArray();
+
+		// Reset control signal graphs
+		this.leftWheelVelocity.dataX = [ 0 ];
+		this.leftWheelVelocity.dataY = [ - 7 ];
+		this.rightWheelVelocity.dataX = [ 0 ];
+		this.rightWheelVelocity.dataY = [ - 9 ];
+		this.leftWheelVelocity.updateDataArray();
+		this.rightWheelVelocity.updateDataArray();
+
+		const dt = 0.05;
+		let t = 0;
+		const maxTime = 40;
+
+		const maxVelocity = this.maxVelocitySlider.Value();
+
+		let currentAngle = Math.atan2(
+			this.robotForward.Y() - this.robotCenter.Y(),
+			this.robotForward.X() - this.robotCenter.X(),
+		);
+
+		const moveRobot = () => {
+
+			const dx = this.endBox.center.X() - this.robotCenter.X();
+			const dy = this.endBox.center.Y() - this.robotCenter.Y();
+			const distance = Math.sqrt( dx * dx + dy * dy );
+
+			if ( t < maxTime && distance > 0.1 ) {
+
+				const targetAngle = Math.atan2( dy, dx );
+				let angleDiff = targetAngle - currentAngle;
+				angleDiff = Math.atan2( Math.sin( angleDiff ), Math.cos( angleDiff ) ); // Normalize to [-pi, pi]
+
+				const angularVelocity = 0.5 * angleDiff;
+				// Change .5 to adjust the turning radius
+
+				const v = Math.min( distance, maxVelocity );
+
+				const leftVelocity = v - angularVelocity * 0.5;
+				const rightVelocity = v + angularVelocity * 0.5;
+
+				// Update robot position
+				const newX = this.robotCenter.X() + v * Math.cos( currentAngle ) * dt;
+				const newY = this.robotCenter.Y() + v * Math.sin( currentAngle ) * dt;
+				this.robotCenter.moveTo( [ newX, newY ] );
+
+				// Update robot orientation
+				currentAngle += angularVelocity * dt;
+				this.robotForward.moveTo( [
+					newX + Math.cos( currentAngle ),
+					newY + Math.sin( currentAngle ),
+				] );
+
+				// Update the path
+				this.path.dataX.push( newX );
+				this.path.dataY.push( newY );
+				this.path.updateDataArray();
+
+				// Update control signal graphs
+				this.leftWheelVelocity.dataX.push( t );
+				this.leftWheelVelocity.dataY.push( leftVelocity - 7 );
+				this.rightWheelVelocity.dataX.push( t );
+				this.rightWheelVelocity.dataY.push( rightVelocity - 9 );
+				this.leftWheelVelocity.updateDataArray();
+				this.rightWheelVelocity.updateDataArray();
+
+				t += dt;
+				this.animationId = requestAnimationFrame( moveRobot );
+
+			} else {
+
+				this.animationId = null;
+
+			}
+
+		};
+
+		moveRobot();
+
+	}
+
+	private reset() {
+
+		// Clear the path
+		this.path.dataX = [];
+		this.path.dataY = [];
+		this.path.updateDataArray();
+
+		// Reset control signal graphs
+		this.leftWheelVelocity.dataX = [ 0 ];
+		this.leftWheelVelocity.dataY = [ - 7 ];
+		this.rightWheelVelocity.dataX = [ 0 ];
+		this.rightWheelVelocity.dataY = [ - 9 ];
+		this.leftWheelVelocity.updateDataArray();
+		this.rightWheelVelocity.updateDataArray();
+
+		// Cancel any ongoing animation
+		if ( this.animationId !== null ) {
+
+			cancelAnimationFrame( this.animationId );
+			this.animationId = null;
+
+		}
+
+		// Move the robot back to its initial position
+		this.robotCenter.moveTo( this.initialRobotPosition );
+		this.robotForward.moveTo( [ this.initialRobotPosition[0] - ( this.robotSize / 2 ), this.initialRobotPosition[1] ] );
+
+	}
+
+}

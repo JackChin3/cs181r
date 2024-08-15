@@ -1,6 +1,6 @@
 import '../css/main.css';
 
-import { WMRGraph, WMRGraphObstacle } from '../lib/main';
+import { WMRGraph, WMRGraphObstacle, WMRGraphForwardControl } from '../lib/main';
 
 const ADD_OBSTACLES = false;
 const ADD_CONTROLS = true;
@@ -21,7 +21,6 @@ const wmr = new WMRGraph( 'app', updateRotation, updateTranslation );
 
 if ( ADD_OBSTACLES ) {
 
-	// TODO: don't divide by 4
 	const obstaclePoints = [
 		[ 3.75, 1.25 ],
 		[ 7.5, 1.25 ],
@@ -45,3 +44,5 @@ if ( ADD_CONTROLS ) {
 }
 
 const wmrObstacle = new WMRGraphObstacle( 'obstacles', updateRotation, updateTranslation );
+
+const wmrFoward = new WMRGraphForwardControl( 'forwardcontrol', updateRotation, updateTranslation );
