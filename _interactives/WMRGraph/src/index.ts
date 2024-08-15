@@ -1,6 +1,6 @@
 import '../css/main.css';
 
-import { WMRGraph } from '../lib/main';
+import { WMRGraph, WMRGraphObstacle } from '../lib/main';
 
 const ADD_OBSTACLES = false;
 const ADD_CONTROLS = true;
@@ -23,12 +23,12 @@ if ( ADD_OBSTACLES ) {
 
 	// TODO: don't divide by 4
 	const obstaclePoints = [
-		[ 15 / 4, 5 / 4 ],
-		[ 30 / 4, 5 / 4 ],
-		[ 30 / 4, 35 / 4 ],
-		[ 25 / 4, 35 / 4 ],
-		[ 25 / 4, 10 / 4 ],
-		[ 15 / 4, 10 / 4 ],
+		[ 3.75, 1.25 ],
+		[ 7.5, 1.25 ],
+		[ 7.5, 8.75 ],
+		[ 6.25, 8.75 ],
+		[ 6.25, 2.5 ],
+		[ 3.75, 2.5 ],
 	];
 
 	wmr.addObstacle( obstaclePoints );
@@ -43,3 +43,5 @@ if ( ADD_CONTROLS ) {
 	e?.parentElement?.insertBefore( controls, e.nextSibling );
 
 }
+
+const wmrObstacle = new WMRGraphObstacle( 'obstacles', updateRotation, updateTranslation );
