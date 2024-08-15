@@ -2,11 +2,11 @@
 // - The PWM, analog output pin of each motor sets the speed (0 is stopped, 255 is full speed)
 // - The DIR, digital output pin of each motor sets the direction (wire with HIGH as forward)
 
-#define MOTOR_LEFT_ENABLE_PWM = D10
-#define MOTOR_LEFT_PHASE_DIR = D9
+#define MOTOR_LEFT_ENABLE_PWM D10
+#define MOTOR_LEFT_PHASE_DIR D9
 
-#define MOTOR_RIGHT_ENABLE_PWM = D8
-#define MOTOR_RIGHT_PHASE_DIR = D7
+#define MOTOR_RIGHT_ENABLE_PWM D8
+#define MOTOR_RIGHT_PHASE_DIR D7
 
 void setup()
 {

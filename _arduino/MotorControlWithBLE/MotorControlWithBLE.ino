@@ -45,9 +45,6 @@ Chrono displayChrono;
 ESP32Encoder encoderRight;
 ESP32Encoder encoderLeft;
 
-// float measuredSpeedRight = 0;
-// float measuredSpeedLeft = 0;
-
 // ----------------------------------------------------------------
 // ▗▄ ▄▖
 // ▐█ █▌      ▐▌
@@ -68,17 +65,20 @@ ESP32Encoder encoderLeft;
 #define CONTROL_GAIN .05
 
 #define PWM_MAX_DELTA_PER_UPDATE 20
-#define PWM_CUTOFF_LOW = 50;
+#define PWM_CUTOFF_LOW 50
 
-#define MOTOR_RIGHT_PWM D8 // yellow
-#define MOTOR_RIGHT_DIR D7 // white
-#define MOTOR_LEFT_PWM D10 // yellow
-#define MOTOR_LEFT_DIR D9  // white
+#define MOTOR_RIGHT_PWM D10 // yellow - > SWITCHED FROM 8 to 10
+#define MOTOR_RIGHT_DIR D9  // white - > SWITCHED FROM 7 to 9
+#define MOTOR_LEFT_PWM D8   // yellow - > SWITCHED FROM 10 to 8
+#define MOTOR_LEFT_DIR D7   // white - > SWITCHED FROM 9 to 7
 
-MotorController motorRightController(HIGH, MOTOR_RIGHT_DIR, MOTOR_RIGHT_PWM, MAX_SPEED_MM_PER_S, PWM_MAX_DELTA_PER_UPDATE, CONTROL_GAIN);
-MotorController motorLeftController(HIGH, MOTOR_LEFT_DIR, MOTOR_LEFT_PWM, MAX_SPEED_MM_PER_S, PWM_MAX_DELTA_PER_UPDATE, CONTROL_GAIN);
+MotorController motorRightController(HIGH, MOTOR_RIGHT_DIR, MOTOR_RIGHT_PWM, MAX_SPEED_MM_PER_S, PWM_MAX_DELTA_PER_UPDATE, CONTROL_GAIN, PWM_CUTOFF_LOW);
+MotorController motorLeftController(LOW, MOTOR_LEFT_DIR, MOTOR_LEFT_PWM, MAX_SPEED_MM_PER_S, PWM_MAX_DELTA_PER_UPDATE, CONTROL_GAIN, PWM_CUTOFF_LOW);
 
 Chrono motorControlChrono;
+
+int motorLeftPWMValue;
+int motorRightPWMValue;
 
 // ----------------------------------------------------------------
 // ▗▄▄▖ ▗▄▖                                ▗▖
@@ -101,7 +101,6 @@ static NimBLEServer *pServer;
 NimBLECharacteristic *pMeasuredSpeedCharacteristicRight = NULL;
 NimBLECharacteristic *pMeasuredSpeedCharacteristicLeft = NULL;
 
-// TODO: move to setup?
 NimBLECharacteristic *pWebSpeedCharacteristicRight = NULL;
 NimBLECharacteristic *pWebSpeedCharacteristicLeft = NULL;
 
@@ -115,7 +114,6 @@ NimBLECharacteristic *pWebSpeedCharacteristicLeft = NULL;
 //  ▀▀▘  ▝▀▀   ▀▀  ▀▀▝▘▐▌▀▘
 //                     ▐▌
 // ----------------------------------------------------------------
-
 
 void setup()
 {
@@ -180,25 +178,28 @@ void setup()
   display.print("started.");
 
   playNote('C', 2000, SPEAKER_PIN);
+
+  motorRightController.stop();
+  motorLeftController.stop();
 }
 
 void shutdownAndAdvertise()
 {
-      // Halt motors
-    motorRightController.stop();
-    motorLeftController.stop();
+  // Halt motors
+  motorRightController.stop();
+  motorLeftController.stop();
 
-    // Play a note and reset the display
-    playNote('B', 1000, SPEAKER_PIN);
-    display.clear();
-    display.print("Device\n");
-    display.print("disconnected.");
+  // Play a note and reset the display
+  playNote('B', 1000, SPEAKER_PIN);
+  display.clear();
+  display.print("Device\n");
+  display.print("disconnected.");
 
-    // Restart advertising after a brief delay
-    delay(500);
-    pServer->startAdvertising();
-    Serial.println("Start advertising");
-    oldDeviceConnected = deviceConnected;
+  // Restart advertising after a brief delay
+  delay(500);
+  pServer->startAdvertising();
+  Serial.println("Start advertising");
+  oldDeviceConnected = deviceConnected;
 }
 
 void loop()
@@ -232,65 +233,13 @@ void loop()
     pMeasuredSpeedCharacteristicLeft->setValue<float>(measuredSpeedLeft);
     pMeasuredSpeedCharacteristicLeft->notify();
 
-    //   compute uDelta = constrain(kp*e, -PWM_MAX_DELTA_PER_UPDATE, PWM_MAX_DELTA_PER_UPDATE)
-    float uDeltaLeft = motorLeftController.proportionalControl(motorWebSpeedPercentLeft, measuredSpeedLeft);
-
-
-    //   compute u = constrain(u + uDelta, -100, 100)
-    controlSignalLeft = constrain(controlSignalLeft + uDeltaLeft, -100, 100);
-    //   set dir = u > 0 ? FORWARD : REVERSE
-    Direction directionValueLeft = controlSignalLeft > 0 ? FORWARD : REVERSE;
-    //   if (abs(u) < SPEED_THRESH_PERCENT) then pwm = 0
-    if (abs(controlSignalLeft) < SPEED_THRESH_PERCENT)
-    {
-      motorLeftPWMValue = 0;
-    }
-    //   else
-    //       set pwm = map(abs(u), 0, 100, MIN_VALUE, 255)
-    else
-    {
-      motorLeftPWMValue = map(abs(controlSignalLeft), 0, 100, MIN_PWM_VALUE, 255);
-    }
-
-    //   set pwm = constrain(pwm, 0, 255)
-    motorLeftPWMValue = constrain(motorLeftPWMValue, 0, 255);
-    // send the values to the motor
-
-    motorLeftController.set(directionValueLeft, motorLeftPWMValue);
-
-    float uDeltaRight = motorRightController.proportionalControl(motorWebSpeedPercentRight, measuredSpeedRight);
-    //   compute u = constrain(u + uDelta, -100, 100)
-    controlSignalRight = constrain(controlSignalRight + uDeltaRight, -100, 100);
-    //   set dir = u > 0 ? FORWARD : REVERSE
-    Direction directionValueRight = controlSignalRight > 0 ? FORWARD : REVERSE;
-    //   if (abs(u) < SPEED_THRESH_PERCENT) then pwm = 0
-    if (abs(controlSignalRight) < SPEED_THRESH_PERCENT)
-    {
-      motorRightPWMValue = 0;
-    }
-    //   else
-    //       set pwm = map(abs(u), 0, 100, MIN_VALUE, 255)
-    else
-    {
-      motorRightPWMValue = map(abs(controlSignalRight), 0, 100, MIN_PWM_VALUE, 255);
-    }
-    //   set pwm = constrain(pwm, 0, 255)
-    motorRightPWMValue = constrain(motorRightPWMValue, 0, 255);
-    // send the values to the motor
-
-
-    motorRightController.set(directionValueRight, motorRightPWMValue);
+    motorRightController.setProportional(motorWebSpeedPercentRight, measuredSpeedRight);
+    motorLeftController.setProportional(motorWebSpeedPercentLeft, measuredSpeedLeft);
   }
 
   if (displayChrono.hasPassed(DISPLAY_UPDATE_PERIOD_MS))
   {
     displayChrono.restart();
-
-    // display.clear();
-    // display.print("left encoder speed: ");
-    // display.println(measuredSpeedLeft);
-    // display.print("right encoder speed: ");
-    // display.println(measuredSpeedRight);
   }
 
   if (!deviceConnected && oldDeviceConnected)

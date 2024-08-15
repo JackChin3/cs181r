@@ -1,7 +1,6 @@
 #ifndef PROPORTIONAL_CONTROL_H
 #define PROPORTIONAL_CONTROL_H
 
-
 enum Direction
 {
   FORWARD,
@@ -17,8 +16,10 @@ public:
   int maxSpeedMMS_;
   int maxPWMDelta_;
   float controlGain_;
+  int minPWM_;
+  float controlSignal;
 
-  MotorController(int forwardLogicLevel, int directionPin, int pwmPin, int maxSpeedMMS, int maxPWMDelta, float controlGain)
+  MotorController(int forwardLogicLevel, int directionPin, int pwmPin, int maxSpeedMMS, int maxPWMDelta, float controlGain, int minPWM)
   {
     forwardLogicLevel_ = forwardLogicLevel;
     directionPin_ = directionPin;
@@ -26,13 +27,16 @@ public:
     maxSpeedMMS_ = maxSpeedMMS;
     maxPWMDelta_ = maxPWMDelta;
     controlGain_ = controlGain;
+    minPWM_ = minPWM;
+    initialize();
   }
 
-  void initialize() {
-    pinMode(pwmPin, OUTPUT);
-    analogWrite(pwmPin, 0);
-    pinMode(directionPin, OUTPUT);
-    digitalWrite(directionPin, LOW);
+  void initialize()
+  {
+    pinMode(pwmPin_, OUTPUT);
+    analogWrite(pwmPin_, 0);
+    pinMode(directionPin_, OUTPUT);
+    digitalWrite(directionPin_, LOW);
   }
 
   void set(Direction direction, int pwm)
@@ -47,7 +51,7 @@ public:
 
   void stop()
   {
-    this.set(0, 0);
+    set(FORWARD, 0);
   }
 
   void setProportional(int motorSpeedPercent, float measuredSpeed)
@@ -55,13 +59,22 @@ public:
     // Convert from percent to mm/s
     int motorSpeed = map(motorSpeedPercent, -100, 100, -maxSpeedMMS_, maxSpeedMMS_);
 
-    float error = motorSpeed - measuredSpeed;
+    int error = motorSpeed - measuredSpeed;
 
-    float pwm = constrain(controlGain_ * error, -maxPWMDelta_, maxPWMDelta_);
+    float uDelta = constrain(controlGain_ * error, -maxPWMDelta_, maxPWMDelta_);
 
-    int direction = motorSpeed > 0 ? FORWARD : REVERSE;
+    controlSignal = constrain(controlSignal + uDelta, -100, 100);
 
-    this.set(direction, pwm);
+    Direction direction = controlSignal > 0 ? FORWARD : REVERSE;
+
+    int pwm = 0;
+
+    if (abs(controlSignal) > 5)
+    {
+      pwm = map(abs(controlSignal), 0, 100, 50, 255);
+    }
+
+    set(direction, pwm);
   }
 };
 
