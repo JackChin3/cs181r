@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>ESP32 Web Interactive LiDAR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="website_style.css" />
+    <meta charset="UTF-8" />
+  </head>
+
+  <body>
+    <h1>ESP32 Web Interactive LiDAR</h1>
+    <button id="connectBleButton" class="connect">Connect</button>
+    <p>
+      BLE status:
+      <strong
+        ><span id="bleState" style="color: #d13a30">Disconnected</span></strong
+      >
+    </p>
+    <p>Last connection checked: <span id="timestamp"></span></p>
+  </body>
+  <style>
+    body {
+      margin: 0;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+  <script>
+    // DOM Elements
+    // used to communicate between the html and javascript
+    const connectButton = document.getElementById("connectBleButton");
+    const bleStateContainer = document.getElementById("bleState");
+    const timestampContainer = document.getElementById("timestamp");
+
+    //Define BLE Device Specs
+    var deviceName = "LiDAR";
+    var bleService = "19b10000-e8f2-537e-4f6c-d104768a1214";
+    var lidarDepthCharacteristic = "19b10001-e8f2-537e-4f6c-d104768a1214";
+
+    // Global Variables to Handle Bluetooth
+    var bleServer;
+    var bleServiceFound;
+    var lidarFound;
+
+    const cols = 8; // Sensor is 8x8
+    const rows = 8;
+    const scaleVal = 90; // Scale value for drawing our mesh
+
+    let xPress = 0.0; // Store the cursor x position on mouse press
+    let yPress = 0.0; // Store the cursor y position on mouse press
+
+    // Mesh Rotation Variables
+    let xRotOffset = 0; // Temporary x rotational offset (relevant during mouse drag)
+    let xRotPos = 0; // X rotational position
+    let zRotOffset = 0; // Temporary z rotational offset (relevant during mouse drag)
+    let zRotPos = 0; // Z rotational position
+    let scaleOffset = 0.5; // Scale factor from mouse wheel
+
+    let depths = new Array(64).fill(0); // Create a list to parse serial into
+
+    let terrain = new Array(cols).fill(null).map(() => new Array(rows).fill(0)); // Create a table of distance values by pixel location
+
+    // Connect Button (search for BLE Devices only if BLE is available)
+    connectButton.addEventListener("click", (event) => {
+      if (bleServer && bleServer.connected) {
+        disconnectDevice();
+      } else {
+        if (isWebBluetoothEnabled()) {
+          connectToDevice(); // i've moved the update status code within connect to device
+        }
+      }
+    });
+
+    function updateStatus() {
+      if (bleServer && bleServer.connected) {
+        bleStateContainer.innerHTML = "Connected to device " + deviceName;
+        bleStateContainer.style.color = "#24af37";
+        console.log("updating connected");
+        setTimeout(updateStatus, 1000);
+        timestampContainer.innerHTML = getDateTime();
+        connectButton.classList.remove("connect");
+        connectButton.classList.add("disconnect");
+        connectButton.textContent = "Disconnect";
+      } else {
+        bleStateContainer.innerHTML = "Disconnected";
+        bleStateContainer.style.color = "#d13a30";
+        console.log("updating disconnected");
+        connectButton.classList.remove("disconnect");
+        connectButton.classList.add("connect");
+        connectButton.textContent = "Connect";
+      }
+      console.log("status checked");
+    }
+
+    function getDateTime() {
+      var currentdate = new Date();
+      var day = ("00" + currentdate.getDate()).slice(-2); // Convert day to string and slice
+      var month = ("00" + (currentdate.getMonth() + 1)).slice(-2);
+      var year = currentdate.getFullYear();
+      var hours = ("00" + currentdate.getHours()).slice(-2);
+      var minutes = ("00" + currentdate.getMinutes()).slice(-2);
+      var seconds = ("00" + currentdate.getSeconds()).slice(-2);
+
+      var datetime =
+        month +
+        "/" +
+        day +
+        "/" +
+        year +
+        " at " +
+        hours +
+        ":" +
+        minutes +
+        ":" +
+        seconds;
+      return datetime;
+    }
+
+    // Check if BLE is available in your Browser
+    function isWebBluetoothEnabled() {
+      if (!navigator.bluetooth) {
+        console.log("Web Bluetooth API is not available in this browser!");
+        bleStateContainer.innerHTML =
+          "Web Bluetooth API is not available in this browser!";
+        return false;
+      }
+      console.log("Web Bluetooth API supported in this browser.");
+      return true;
+    }
+
+    // Connect to BLE Device and Enable Notifications
+    function connectToDevice() {
+      console.log("Initializing Bluetooth...");
+      navigator.bluetooth
+        .requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [bleService],
+        })
+        .then((device) => {
+          console.log("Device Selected:", device.name);
+          device.addEventListener("gattservicedisconnected", onDisconnected);
+          return device.gatt.connect();
+        })
+        .then((gattServer) => {
+          bleServer = gattServer;
+          console.log("Connected to GATT Server");
+          return bleServer.getPrimaryService(bleService);
+        })
+        .then((service) => {
+          bleServiceFound = service;
+          console.log("Service discovered:", service.uuid);
+          return service.getCharacteristic(lidarDepthCharacteristic);
+        })
+        .then((characteristics) => {
+          console.log("Characteristics discovered:", characteristics);
+          lidarSensor = characteristics;
+
+          console.log("Reading initial values from characteristics...");
+          return Promise.all([lidarSensor.readValue()]);
+        })
+        .then((values) => {
+          console.log("Initial values read from characteristics:", values);
+
+          const dataViewLiDAR = new DataView(values[0].buffer);
+          const floatValueLiDAR = dataViewLiDAR.getFloat32(0, true);
+          console.log("LiDAR Value (Initial):", floatValueLiDAR);
+
+          return Promise.all([lidarSensor.startNotifications()]);
+        })
+        .then(() => {
+          console.log("Notifications started for both characteristics.");
+          lidarSensor.addEventListener(
+            "characteristicvaluechanged",
+            lidarSensorNotification
+          );
+          setTimeout(updateStatus, 1000);
+        })
+        .catch((error) => {
+          console.error("Error:", error);
+        });
+    }
+
+    function lidarSensorNotification(event) {
+      const value = event.target.value;
+      const dataView = new DataView(value.buffer);
+      const intValues = [];
+      for (let i = 0; i < dataView.byteLength; i += 4) {
+        // Change 4 to 2 for getInt16, 1 for getInt8
+        intValues.push(dataView.getInt32(i, true)); // Change getInt32 to getInt16 or getInt8 as needed
+      }
+      console.log("LiDAR Value:", intValues);
+
+      intValues.push(0);
+
+      // Convert to 2D array
+      depths = intValues;
+      draw();
+    }
+
+    function setup() {
+      createCanvas(1475, 750, WEBGL); // Make a 3D capable window
+    }
+
+    function convertTo2DArray(list) {
+      if (list.length !== 64) {
+        throw new Error("List must contain exactly 64 elements.");
+      }
+
+      let array2D = [];
+      for (let i = 0; i < 8; i++) {
+        let row = [];
+        for (let j = 0; j < 8; j++) {
+          row.push(list[i * 8 + j]);
+        }
+        array2D.push(row);
+      }
+      return array2D;
+    }
+
+    function draw() {
+      colorMode(HSB); // HSB color space makes it easy to map hue
+      //lights(); // Add ambient light to scene
+      noStroke(); // Draw without stroke
+      smooth(); // Draw with anti-aliasing
+      background(0); // Fill background with black
+
+      let centerX = 0;
+      let centerY = 0;
+
+      translate(centerX, centerY);
+      rotateX(PI / 3 - (xRotOffset + xRotPos));
+      rotateZ(0 - zRotOffset - zRotPos);
+      scale(scaleOffset);
+      translate((-cols * scaleVal) / 2, (-rows * scaleVal) / 2); // Adjust the translation to center the visualization
+
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (depths.length >= 64) {
+            terrain[x][y] = depths[x + y * cols] / 10;
+          }
+        }
+      }
+
+      // For each row, draw a triangle strip with the z-height of
+      // each vertex corresponding to the distance reading at that
+      // location. While we're at it, set the fill color to a hue
+      // corresponding to the data as well.
+      for (let y = 0; y < rows - 1; y++) {
+        beginShape(TRIANGLE_STRIP);
+        for (let x = 0; x < cols; x++) {
+          fill(map(terrain[x][y], 0, 400, 255, 0), 255, 255);
+          vertex(x * scaleVal, y * scaleVal, terrain[x][y]);
+          vertex(x * scaleVal, (y + 1) * scaleVal, terrain[x][y + 1]);
+        }
+        endShape();
+      }
+    }
+
+    // When the mouse is pressed, remember where the cursor was
+    // so we can calculate how "far" it gets dragged
+    function mousePressed() {
+      xPress = mouseX;
+      yPress = mouseY;
+    }
+
+    // Between mouse drag events, draw will still be running, so we need to
+    // update this offset at every event.
+    function mouseDragged() {
+      xRotOffset = (mouseY - yPress) / 100;
+      zRotOffset = (mouseX - xPress) / 100;
+    }
+
+    // To prevent the mesh position "snapping back" after releasing the mouse button
+    // We add the new temporary offset to the position and clear the temporary offset
+    // for the next mouse drag
+    function mouseReleased() {
+      xRotPos += xRotOffset;
+      xRotOffset = 0;
+      zRotPos += zRotOffset;
+      zRotOffset = 0;
+    }
+
+    // Whenever the mousewheel is scrolled, we adjust the scale offset of the mesh
+    // function mouseWheel(event) {
+    //   let e = event.deltaY;
+    //   scaleOffset += e / 1000;
+    // }
+
+    function onDisconnected(event) {
+      console.log("Device Disconnected:", event.target.device.name);
+      // bleStateContainer.innerHTML = "Disconnected";
+      // bleStateContainer.style.color = "#d13a30";
+      connectToDevice();
+    }
+
+    function disconnectDevice() {
+      console.log("Disconnect Device.");
+      if (bleServer && bleServer.connected) {
+        if (lidarFound && leftEncoderFound) {
+          Promise.all([
+            lidarFound.stopNotifications(),
+            leftEncoderFound.stopNotifications(),
+          ])
+            .then(() => {
+              console.log("Notifications Stopped");
+              return bleServer.disconnect();
+            })
+            .then(() => {
+              console.log("Device Disconnected");
+              bleStateContainer.innerHTML = "Device Disconnected";
+              bleStateContainer.style.color = "#d13a30";
+              changeBothWheels(0, 0, false);
+            })
+            .catch((error) => {
+              console.log("An error occurred:", error);
+            });
+        } else {
+          console.log("No characteristic found to disconnect.");
+        }
+      } else {
+        // Throw an error if Bluetooth is not connected
+        console.error("Bluetooth is not connected.");
+        window.alert("Bluetooth is not connected.");
+      }
+    }
+
+    function throwerror() {
+      console.error(
+        "Bluetooth is not connected. Cannot write to characteristic."
+      );
+      window.alert(
+        "Bluetooth is not connected. Cannot write to characteristic. \n Connect to BLE first!"
+      );
+    }
+
+    function toggleButtonState(button, oppositeButton) {
+      // Remove 'selected' class from all buttons
+      [forwardButton, backwardButton].forEach((btn) =>
+        btn.classList.remove("selected")
+      );
+
+      // Toggle 'selected' class on the clicked button
+      button.classList.toggle("selected");
+
+      // Turn off the opposite button
+      oppositeButton.classList.remove("selected");
+    }
+  </script>
+</html>
